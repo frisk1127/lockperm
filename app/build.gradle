@@ -35,7 +35,7 @@ android {
     defaultConfig {
         applicationId "io.github.sunilxsk.lockperm"
         minSdk 28
-        targetSdk 36
+        targetSdk 37
         versionCode 541
         versionName "5.4.1-accessibility.1"
 
