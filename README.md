@@ -2,7 +2,7 @@
 
 本 fork 修复无障碍“已授权”伪装：覆盖 `Settings.Secure` 的数值与字符串查询，并使用目标应用 Manifest 中声明的完整服务组件名，兼容 iTEST 5.16.0 的精确匹配检查。关闭无障碍防护后，其默认状态值不再覆盖权限伪装。修改只作用于目标进程的查询结果，不启用系统无障碍服务。
 
-在目标应用的“权限伪装”中勾选“无障碍服务”，保持“无障碍防护”关闭，然后强制停止目标应用再打开。GitHub Actions 提供 arm64 调试 APK 与单元测试报告；本地构建使用 JDK 21、Gradle 9.6.0、Android SDK 36 和 NDK 29，可运行 `gradle :app:testDebugUnitTest :app:assembleDebug`。Termux 的 SDK、NDK、aapt2 路径请配置在本地文件中。
+在目标应用的“权限伪装”中勾选“无障碍服务”，保持“无障碍防护”关闭，然后强制停止目标应用再打开。GitHub Actions 提供 arm64 调试 APK 与单元测试报告；本地构建使用 JDK 21、Gradle 9.6.0、Android SDK 37.0 和 NDK 29，可运行 `gradle :app:testDebugUnitTest :app:assembleDebug`。Termux 的 SDK、NDK、aapt2 路径请配置在本地文件中。
 
 ---
 
