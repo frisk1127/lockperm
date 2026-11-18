@@ -1,6 +1,9 @@
 package io.github.sunilxsk.lockperm
 
 import android.content.SharedPreferences
+import android.content.ComponentName
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Method
 
@@ -409,17 +412,39 @@ internal class SpecialPermFake(
             "android.provider.Settings\$Global",
         ).forEach { name ->
             val holder = cls(name) ?: return@forEach
-            holder.declaredMethods.filter { it.name == "getString" }.forEach { m ->
+            holder.declaredMethods.filter {
+                it.name == "getInt" || it.name == "getIntForUser"
+            }.forEach { m ->
                 hookMethod(m) { chain ->
-                    val result = chain.proceed()
                     val key = chain.args.filterIsInstance<String>().firstOrNull()
+                    if (key == "accessibility_enabled" && on(XpConfig.PERM_ACCESSIBILITY)) {
+                        1
+                    } else {
+                        chain.proceed()
+                    }
+                }
+            }
+            holder.declaredMethods.filter {
+                it.name == "getString" || it.name == "getStringForUser"
+            }.forEach { m ->
+                hookMethod(m) { chain ->
+                    val key = chain.args.filterIsInstance<String>().firstOrNull()
+                    if (key == "accessibility_enabled" && on(XpConfig.PERM_ACCESSIBILITY)) {
+                        return@hookMethod "1"
+                    }
+                    val result = chain.proceed()
                     if (key !in targets) return@hookMethod result
 
                     val pkg = XpState.packageName
-                    val want = when (key) {
-                        "enabled_accessibility_services" -> on(XpConfig.PERM_ACCESSIBILITY)
-                        else -> on(XpConfig.PERM_NOTIFICATION_LISTENER)
+                    if (key == "enabled_accessibility_services") {
+                        if (!on(XpConfig.PERM_ACCESSIBILITY) || pkg.isEmpty()) return@hookMethod result
+                        val services = accessibilityServices()
+                        if (services.isEmpty()) return@hookMethod result
+                        return@hookMethod AccessibilityServiceComponents.merge(
+                            result as? String, pkg, services.map { it.name },
+                        )
                     }
+                    val want = on(XpConfig.PERM_NOTIFICATION_LISTENER)
                     if (!want || pkg.isEmpty() || result != null && result.toString().contains(pkg)) {
                         return@hookMethod result
                     }
@@ -454,16 +479,20 @@ internal class SpecialPermFake(
                         val list = result as? List<*> ?: return@hookMethod result
                         val pkg = XpState.packageName
                         if (pkg.isEmpty()) return@hookMethod result
-                        val has = list.any {
-                            runCatching {
-                                val info = it as? android.accessibilityservice.AccessibilityServiceInfo
-                                info?.resolveInfo?.serviceInfo?.packageName == pkg
-                            }.getOrNull() ?: false
+                        val present = list.mapNotNull {
+                            val info = it as? android.accessibilityservice.AccessibilityServiceInfo
+                            info?.resolveInfo?.serviceInfo?.let { service ->
+                                ComponentName(service.packageName, service.name).flattenToString()
+                            }
+                        }.toSet()
+                        val missing = accessibilityServices().filter {
+                            ComponentName(it.packageName, it.name).flattenToString() !in present
+                        }.mapNotNull { buildFakeServiceInfo(it) }
+                        if (missing.isEmpty()) return@hookMethod result
+                        logWarn("accessibility service list -> 注入本应用声明的服务")
+                        ArrayList<Any>(list.filterNotNull()).apply {
+                            addAll(missing)
                         }
-                        if (has) return@hookMethod result
-                        val fake = buildFakeServiceInfo(pkg) ?: return@hookMethod result
-                        logWarn("accessibility service list -> 注入本应用")
-                        ArrayList<Any>(list.filterNotNull()).apply { add(fake) }
                     }
                 }
         }
@@ -476,15 +505,37 @@ internal class SpecialPermFake(
 
 
 
-    private fun buildFakeServiceInfo(pkg: String): Any? {
+    @Volatile
+    private var cachedAccessibilityServices: List<ServiceInfo>? = null
+
+    private fun accessibilityServices(): List<ServiceInfo> {
+        cachedAccessibilityServices?.let { return it }
+        val context = appContext() ?: return emptyList()
+        val pkg = XpState.packageName
+        if (pkg.isEmpty()) return emptyList()
+        return runCatching {
+            @Suppress("DEPRECATION")
+            val info = context.packageManager.getPackageInfo(pkg, PackageManager.GET_SERVICES)
+            info.services.orEmpty().filter {
+                it.packageName == pkg && it.permission == "android.permission.BIND_ACCESSIBILITY_SERVICE"
+            }.also { cachedAccessibilityServices = it }
+        }.onFailure { logWarn("accessibility service discovery failed", it) }.getOrDefault(emptyList())
+    }
+
+    private fun buildFakeServiceInfo(service: ServiceInfo): Any? {
         val ri = android.content.pm.ResolveInfo().apply {
-            serviceInfo = android.content.pm.ServiceInfo().apply {
-                packageName = pkg
-                name = "$pkg.FakeAccessibilityService"
-            }
+            serviceInfo = service
         }
         val asi = android.accessibilityservice.AccessibilityServiceInfo()
         val cls = asi.javaClass
+        val component = ComponentName(service.packageName, service.name)
+        // Android versions store the service identity in either of these fields.
+        runCatching {
+            cls.getDeclaredField("mComponentName").apply { isAccessible = true }.set(asi, component)
+        }
+        runCatching {
+            cls.getDeclaredField("mId").apply { isAccessible = true }.set(asi, component.flattenToString())
+        }
 
         for (fname in listOf("resolveInfo", "mResolveInfo")) {
             val f = runCatching { cls.getDeclaredField(fname) }.getOrNull() ?: continue

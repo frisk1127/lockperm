@@ -73,6 +73,7 @@ internal class AccessibilityDefender(
 
 
     private fun statusOff(): Boolean {
+        if (!active()) return false
         val cfg = snapshot()
         if (cfg.accStatusSpoof) return !cfg.accStatusValue
         
@@ -165,6 +166,7 @@ internal class AccessibilityDefender(
         
         am.declaredMethods.filter { it.name == "isEnabled" }.forEach { m ->
             hookMethod(m) { chain ->
+                if (!active()) return@hookMethod chain.proceed()
                 val cfg = snapshot()
                 if (cfg.accStatusSpoof) {
                     if (!cfg.accStatusValue) forceDisabledFlags(chain.getThisObject())
@@ -187,6 +189,7 @@ internal class AccessibilityDefender(
         }
         am.declaredMethods.filter { it.name == "isTouchExplorationEnabled" }.forEach { m ->
             hookMethod(m) { chain ->
+                if (!active()) return@hookMethod chain.proceed()
                 val cfg = snapshot()
                 if (cfg.accStatusSpoof && !cfg.accStatusValue) {
                     forceDisabledFlags(chain.getThisObject())
